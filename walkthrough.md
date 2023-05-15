@@ -85,9 +85,13 @@ I then continued by observing the storage layout, as proxy contracts can easily 
 
 In running the code above, two things stand out. 
 
-First, the admin's signature and nonce are accepted without issue as we replay it to the impl contract. This implies that the domain separator used to generate the signature _does not contain the contract address_ as an entropy seed to guard against cross-contract signature replay. Another thing worth keeping in mind as we move forward!
+First, the admin's signature 
+```0xc8f549a7e4cb7e1c60d908cc05ceff53ad731e6ea0736edf7ffeea588dfb42d8625cb970c2768fefafc3512a3ad9764560b330dcafe02714654fe48dd069b6df1c```
+and nonce are accepted without issue as we replay it to the impl contract. This implies that the domain separator used to generate the signature _does not contain the contract address_ as an entropy seed to guard against cross-contract signature replay. Another thing worth keeping in mind as we move forward!
 
-Second, a discerning eye will notice that the nonce provided to the initialize function is identical to the ```bytes32 r``` value of ```adminSig``` Non-incrementing nonces aren't necessarily a vulnerability, but reusing the r value as a nonce could pose some problems in certain scenarios so we'll also keep tabs on that.
+Second, a discerning eye will notice that the nonce 
+```0xc8f549a7e4cb7e1c60d908cc05ceff53ad731e6ea0736edf7ffeea588dfb42d8```
+provided to the initialize function is identical to the ```bytes32 r``` value of ```adminSig``` Non-incrementing nonces aren't necessarily a vulnerability, but reusing the r value as a nonce could pose some problems in certain scenarios so we'll also keep tabs on that.
 
 ## The storage layouts 'diff' approach
 
@@ -110,6 +114,37 @@ for (uint i; i < 10; ++i) {
 Here's the output:
 ![StorageLayout](public/StorageLayout.png)
 
+From this we can decipher the following intended layout:
+Slot 0 (packed): ```bool isInitialized``` with ```address admin```
+Slot 1: ```address operator```
+Slot 2: ```bytes32 friendshiphash```
+Slot 3: ```uint256 lastdripid```
+Slot 4: ```uint256 dripcount```
+Slot 5: ```uint256 dripfee```
+Slot 6: ```uint256 leakcount```
+Slot 7: ```mapping isValidDripId```
+Slot 8: ```mapping signatureConsumedAt```
+
+## 🚩🚩 Red flag alert 🚩🚩
+
+The storage layout between both contracts is identical! The logic implementation should not have the same storage layout as the proxy because the proxy has a couple additional storage variables. 
+
+Generally, a logic implementation used as the backend for a proxy includes a safety offset implemented in storage layout. _This works similarly to Solidity's scratch-space memory allocation for memory offsets 0x00 to 0x39 a reserved location used for calculating hashes without colliding with other memory pointers that start at offset 0x40._
+
+We've found storage collision vulnerabilities! 
+
+The first is benign: namely that PuzzleBoxProxy's slot 0 containing ```isFunctionLocked``` mapping overlaps PuzzleBox's packed variables, ```bool isInitialized``` bool and ```address admin```. Since mappings are dynamic, their slot indices are only used to find an unreachable starting slot via hashing. This means we can't abuse the first collision.
+
+The second, however, is not benign: PuzzleBoxProxy's slot 1 containing ```address owner``` overlaps PuzzleBox's ```address owner```. This means that although the proxy's owner address is set in its constructor, it can actually be overwritten by setting the operator variable using ```PuzzleBox.operate()```
+
+So let's do it!
+
+##### Quick takeaway: if a safety offset in storage had been used or ```owner``` had been marked immutable or if the logic implementation had been initialized, this bug would not be hackable.
+
+## Become operator
+
+//here
+
 
 locked functions:
 0x925facb1 torch()
@@ -127,25 +162,9 @@ unlocked functions:
 0x58657dcf open()
 
 
-admin signature & nonce can be reused to initialize logic impl:
-0xc8f549a7e4cb7e1c60d908cc05ceff53ad731e6ea0736edf7ffeea588dfb42d8625cb970c2768fefafc3512a3ad9764560b330dcafe02714654fe48dd069b6df1c
-nonce: 0xc8f549a7e4cb7e1c60d908cc05ceff53ad731e6ea0736edf7ffeea588dfb42d8
-
 1. unlock torch by utilizing operator == owner storage collision in order to call ```lock(torch.selector, false)```
 2. to satisfy torch's burnDripId(5) modifier, exploit reentrancy in drip to bypass fee exponentiation and raise lastDripId to 5
 3. use torch()'s _burndrip call to reach into other storage slots? (provide encodedDripId that overwrites another value, eg lastdripid and admin)
     - must set isValidDripId[lastDripId] = true
     - use storage collision of friendshipHash <-> lastDripid to set it to true?
 
-
--proxy storage layout
-slot 0 (packed): bool isInitialized & address admin ( == PuzzleBoxProxy._logic )
-slot 1 operator ( == PuzzleBoxProxy.owner )
-slot 2 friendshiphash
-slot 3 lastdripid
-slot 4 dripcount
-slot 5 dripfee
-slot 6 leakcount
-
--impl storage layout
-same as proxy!? No safety offset implemented in storage layout, which means all of PuzzleBoxProxy contract's storage is vulnerable to collision!!
