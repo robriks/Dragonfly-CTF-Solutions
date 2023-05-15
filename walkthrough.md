@@ -55,9 +55,31 @@ First, ```$ cast sig 'isInitialized()'``` will give us the bytes4 function selec
 
 0x00! That's some valuable information to keep in mind for later! Uninitialized logic implementations can be vulnerable to privilege escalation or Exploding Kittens, so that may be an avenue to explore.
 
+## Working backwards
+
+Knowing that the Dragonfly CTF is centered around opening a puzzlebox, it seems safe to guess that the PuzzleBox contract's ```open()``` function serves as the final step of completing the challenge. From there, we can work backwards with suspected avenues of attack.
+
+In ```open()```, we see a comment that confirms my suspicions:
+
+```// Congrats ;-)```
+
+So let's identify the requirements for calling ```open()``` and earn that congratulatory comment.
+
+Strikingly, there are three modifier functions attached: ```maxBalance(0)```, ```maxDripCount(0)```, and ```minTotalDripped(10)``` A quick CTRL+F takes us to these functions where, unsurprisingly, their logic reflects their names.
+
+```maxBalance(0)``` tells us we must find a way to drain the contract's Ether balance entirely, since even ```unchecked``` underflow would not satisfy ```address(this).balance <= 0```
+
+```maxDripCount(0)``` appears to refer to the ```drip()``` function which increments the uint256 variable in storage named ```dripCount``` We'll either need to prevent the increment from happening or decrement ```dripCount``` using the internal ```_burnDrip()``` function.
+
+```minTotalDripped(10)``` also appears to refer to the ```drip()``` function, because it increments yet another storage uint named ```lastDripId``` This storage uint must however somehow reach 10 while satisfying ```maxDripCount(0)```
+
+If we can satisfy those three modifiers and provide a valid ```bytes calldata adminSig``` that resolves to the admin address, we win!
+
+Now we have a destination in mind, with some functions we know we'll have to exploit. At this point, I decided to go back to probing the storage layout since we had already identified one potential issue that may lead us in the right direction without having to toil line-by-line.
+
 ## Continuing the common proxy vulnerabilities rabbithole
 
-I then continued by observing the storage layout, as proxy contracts can easily give rise to storage collisions without careful attention. Since the impl contract is uninitialized, we should call initialize with the same parameters as the proxy contract so we can compare them as apples to apples:
+As we already know, proxy contracts can easily give rise to storage collisions without careful attention. To continue examining the integrity of the proxy architecture, storage layout should be enumerated. Since the impl contract is uninitialized, we should call initialize with the same parameters as the proxy contract so we can compare them as apples to apples:
 
 ```
     // initialize impl to then read impl's storage layout
@@ -139,7 +161,7 @@ The second, however, is not benign: PuzzleBoxProxy's slot 1 containing ```addres
 
 So let's do it!
 
-##### Quick takeaway: if a safety offset in storage had been used or ```owner``` had been marked immutable or if the logic implementation had been initialized, this bug would not be hackable.
+##### Quick takeaway: if a safety offset in storage had been used or ```owner``` had been marked immutable or if the logic implementation had been initialized, there would be no hack available.
 
 ## Become operator
 
