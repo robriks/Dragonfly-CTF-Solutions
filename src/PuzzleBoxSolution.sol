@@ -4,12 +4,11 @@ import "./PuzzleBox.sol";
 
 contract PuzzleBoxSolution {
 
-    uint test;
     function solve(PuzzleBox puzzle) external {
         // How close can you get to opening the box?
         
-        address factory = 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f;
         address proxy = address(puzzle);
+        address factory = 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f;
 
         EoaSpoof eoaSpoof = new EoaSpoof(puzzle);
         eoaSpoof.reenterDrip();
