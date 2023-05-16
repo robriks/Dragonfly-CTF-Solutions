@@ -9,7 +9,7 @@ contract PuzzleBoxSolution {
         
         address proxy = address(puzzle);
         address factory = 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f;
-        address impl = PuzzleBoxFactory(factory).logic();
+        address impl = address(PuzzleBoxFactory(factory).logic());
 
         EoaSpoof eoaSpoof = new EoaSpoof(puzzle);
         eoaSpoof.reenterDrip();
@@ -22,20 +22,27 @@ contract PuzzleBoxSolution {
         friendsCutBps[1] = 0.0075e4;
         puzzle.spread(friends, friendsCutBps);
 
-        eoaSpoof.destro();
+        // eoaSpoof.destro();
         
         // puzzle.creep();
         
-        uint256[] memory torchees = new uint[](5);
+        uint256[] memory torchees = new uint[](6);
         torchees[0] = 2; 
         torchees[1] = 4;
         torchees[2] = 6;
         torchees[3] = 7;
         torchees[4] = 8;
+        torchees[5] = 9;
 
-        puzzle.torch(abi.encode(torchees));
+        (bool r,) = proxy.call(abi.encodePacked(
+            puzzle.torch.selector, 
+            uint256(0x01),
+            uint8(0),
+            abi.encode(torchees)
+        ));
+        require(r);
 
-        (bool r,) = proxy.call(abi.encode(puzzle.zip.selector));
+        // (bool s,) = proxy.call(abi.encode(puzzle.zip.selector));
     }
 }
 
