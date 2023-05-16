@@ -165,7 +165,88 @@ So let's do it!
 
 ## Become operator
 
-//here
+Becoming operator provides solid leverage because it gives us control over the ```operation()``` modifier function that gates the ```drip()``` function which we know we'll have to exploit in some way to call ```open()``` The only function that provides a way to change the value of ```operator``` (and thereby ```owner```) is ```operate()```
+
+One function modifier stands in our way however: ```noContractCaller```, which checks ```msg.sender.code.length == 0``` a la the EXTCODESIZE opcode. Here, our knowledge of contract deployment comes into play!
+
+A smart contract's EXTCODESIZE will actually return 0 throughout the entirety of its deployment transaction regardless of the contract's bytecode. This means that so long as we call ```operate()``` during the constructor of a contract deployment, ```noContractCaller``` will not give us any trouble :D
+
+In doing this, we also get to drain the PuzzleBox's l33t balance of 1337! But something tells me that isn't going to be quite enough to satisfy the ```maxBalance(0)``` modifier just yet.
+
+WRT implementation, we'll have to write a new contract instance and deploy it within ```solve()``` by doing something like this:
+
+```
+contract EoaSpoof {
+
+    PuzzleBox puzzle;
+    
+    constructor(PuzzleBox _puzzle) {
+        puzzle = _puzzle;
+        address payable proxy = payable(address(_puzzle));
+
+        (bool a, bytes memory b) = proxy.call(hex'8da5cb5b'); // check PuzzleBoxProxy.owner storage slot
+        _puzzle.operate(); // become operator / owner
+        (bool c, bytes memory d) = proxy.call(hex'8da5cb5b'); // prove PuzzleBoxProxy.owner == PuzzleBox.operator
+    }
+}
+```
+
+Using a ```new EoaSpoof()``` we can now ascertain that the storage slot housing the operator / owner variable is set to our PuzzleBoxSolution contract. Our ```solve()``` function looks like this so far:
+
+```
+function solve(PuzzleBox puzzle) external {
+    // How close can you get to opening the box?
+    
+    address proxy = address(puzzle);
+    address factory = 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f;
+    address impl = PuzzleBoxFactory(factory).logic();
+
+    EoaSpoof eoaSpoof = new EoaSpoof(puzzle);
+}
+```
+
+## Now what?
+
+Now that we've assumed the role of operator, it's time to have a look at the ```drip()``` function since we have gained access to it. It must be called with at least ```dripFee``` (== 100 wei) ETH; and it immediately any excess ETH back to the caller. Did someone say reentrancy??
+
+Yup, Checks -> Effects -> Interactions completely went out the window here, so we can reenter using the external call that refunds ETH. This is extremely useful to our purposes, since we want to emerge from this function with a ```minTotalDripped(10)``` while the function is actually intended to double ```dripFee``` with each call. Without the reentrancy vulnerability, our newly acquired 1337 wei would not be nearly enough.
+
+But wait! This ```drip()``` function possesses the ```operation``` modifier which resets the value of ```operator``` at the end of execution:
+
+```
+modifier operation() {
+    require(msg.sender == operator, 'only current operator');
+    _;
+    operator = payable(address(uint160(0xDEAD)));
+}
+```
+
+So our solution needs to complete its reentrancy before reaching the final line of ```operation()``` when we lose operator status, meaning EoaSpoof must be the contract to perform the reentrance with its newly acquired 1337 wei. Whew!
+
+## Implementing EoaSpoof's reentrant fallback function
+
+Since reentrancy is a feature of the EVM's fallback functionality, we add a fallback function to EoaSpoof:
+
+```
+uint256 reentranceCounter;
+
+// fallback accepts drained ETH and exploits reentrancy vulnerability in puzzle's drip()
+fallback() external payable {
+    reentranceCounter++;
+
+    // reenter 10 times to raise lastDripId to 10
+    if (reentranceCounter < 10) {
+        puzzle.drip{ value: 101 }();
+    }
+}
+```
+
+This satisfies the first line of ```drip()``` and causes it to return any ETH in excess of ```dripFee```, in this case a single Wei (101 >= 100). Also note the introduction of an EoaSpoof storage uint ```reentranceCounter``` which will ensure that reentrancy concludes with ```dripCount == 10```
+
+Just like that, we've satisfied the ```minTotalDripped``` modifier that gates ```open()``` without running out of ETH. But in doing so, we've also broken the ```maxDripCount(0)``` and the ```maxBalance(0)```.
+
+## 
+
 
 
 locked functions:
