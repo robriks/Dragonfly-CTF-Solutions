@@ -26,7 +26,7 @@ contract PuzzleBoxSolution {
         
         // puzzle.creep();
         
-        uint256[] memory torchees = new uint[](6);
+        uint256[] memory torchees = new uint256[](6);
         torchees[0] = 2; 
         torchees[1] = 4;
         torchees[2] = 6;
@@ -37,7 +37,7 @@ contract PuzzleBoxSolution {
         (bool r,) = proxy.call(abi.encodePacked(
             puzzle.torch.selector, 
             uint256(0x01),
-            uint8(0),
+            false,
             abi.encode(torchees)
         ));
         require(r);

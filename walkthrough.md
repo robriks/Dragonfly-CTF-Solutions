@@ -320,30 +320,54 @@ Success, yet going back to call the now-unlocked function still causes a revert!
 
 The CTF came at a very busy time for me at the National Symphony Orchestra so I was only able to hack on it for the last 12 hours of the CTF on the final day. But I found a good amount of bugs in that short time frame and am pretty confident I'd have been able to solve the entire CTF given more hours. Lucky for you, I've since looked at solutions and learned a few tricks that should both speed up my process and get you the hacks you're lusting for :D
 
-## An oft-overlooked calldata encoding scheme
+## We do a little calldata encoding wizardry
 
-Turns out the key to getting past the ```maxCallDataSize(300)``` modifier is to use an uncommon but EVM-recognizable compact calldata encoding scheme called 'Non-standard Packed Mode'. To accomplish that, you can manually construct compressed calldata by providing the function selector, the offset to the start of the array, the length of the array, and then the data of the array itself. The calldata that will pass the modifier and be correctly parsed by the compiler looks like the following:
+Turns out the key to getting past the ```maxCallDataSize(300)``` modifier is to use an uncommon but EVM-recognizable compact calldata encoding scheme called 'Non-standard Packed Mode'. To accomplish that, you can manually construct compressed calldata by providing the function selector, the offset to the start of the array, the length of the array, and then the data of the array itself. All these items must be encoded using ```abi.encodePacked()``` to avoid empty bytes added by the padding behavior of the usual```abi.encode```
 
-```
-0000000000000000000000000000000000000000000000000000000000000020 // calldata offset pointer
-0000000000000000000000000000000000000000000000000000000000000006 // length of array
-0000000000000000000000000000000000000000000000000000000000000002 // first element of torchees array
-0000000000000000000000000000000000000000000000000000000000000004 // second element
-0000000000000000000000000000000000000000000000000000000000000006 // etc
-0000000000000000000000000000000000000000000000000000000000000007
-0000000000000000000000000000000000000000000000000000000000000008
-0000000000000000000000000000000000000000000000000000000000000009
-```
+If we use normal calldata encoding via ```abi.encode```, the total bytesize of our payload grows to 320 bytes and causes a revert. Instead, with a clever calldata optimization trick, we are able to convince the decoder to reread a chunk of calldata that saves us 31 bytes! How, you ask? Let's work backwards.
 
-Which can be constructed using Solidity like this:
+Here's the final calldata of 289 byte length that will pass the ```maxCallDataSize(300)``` modifier and still have the decoder correctly parse the uint array of ids we want to torch:
+
+![calldata.png](public/calldata.png)
+
+##### Take note of the extra 0x00 byte hanging off the edge of the above calldata's first line, I'll explain it in a moment.
+
+The above calldata can be 'manually' constructed using Solidity like this:
 
 ```
 (bool r,) = proxy.call(abi.encodePacked(
     puzzle.torch.selector, 
     uint256(0x01),
-    uint8(0),
+    false,
     abi.encode(torchees)
 ));
 
 require(r);
 ```
+
+As you can see in the above code snippet, we've taken fine-grained control over the calldata. By providing two parameters different from what would be created using the usual ```abi.encode``` we goad the decoder into extracting both the offset pointer and the total length of all eight subsequent 32 byte words from just the first 33 bytes of calldata!
+
+## TL;DR- just explain how the calldata is decoded already!
+
+Here's the flow of the decoder in its entirety:
+
+1. Read the bytes4 function selector: ```puzzle.torch.selector```
+2. Read the first 32 bytes as the calldata offset pointer to the start of the arguments: ```uint256(0x01)```
+3. Jump to the calldata offset pointer that was just read (ie starting after the 1st 0x00 byte) and read to obtain the length of arguments. Since 31 bytes of the first word are reread with a single byte (```bool false```) tacked on at the end, this results in 0x100 which is equal to arguments totaling eight 32 byte words
+4. Continue to the next 32 byte word, the second line in the image above, to read 0x20 which is the calldata offset pointer for the torchees array
+5. Jump to the the calldata offset pointer that was just read (ie the next 32 byte word) and read to obtain the length of the torchees array: 0x06
+6. Continue to the next 32 byte word, which is the value of the first element within the torchees array: 0x02
+7. Continue to the next 32 byte word, which is the value of the second element within the torchees array: 0x04
+8. Continue to the next 32 byte word, which is the value of the third element within the torchees array: 0x06
+9. Continue to the next 32 byte word, which is the value of the fourth element within the torchees array: 0x07
+10. Continue to the next 32 byte word, which is the value of the fifth element within the torchees array: 0x08
+11. Continue to the next 32 byte word, which is the value of the sixth and final element within the torchees array: 0x09
+
+In short, by reusing 31 of the first 33 bytes in the payload to obtain the offset as well as the total argument length, we save enough ```CALLDATASIZE``` to pass the modifier on ```torch()```
+
+##### Huge thanks to Lawrence Forman [@merklejerk on Twitter](https://twitter.com/merklejerk) who took the time to personally bolster my understanding of this challenge (in his own CTF!)
+
+
+
+
+All in all, the Dragonfly.xyz CTF was a fantastic experience to participate in and the organizer, Lawrence Forman [@merklejerk on Twitter](https://twitter.com/merklejerk), deserves applause for an excellent educational resource for whitehat hackers and security enthusiasts like me.
