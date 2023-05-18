@@ -33,13 +33,14 @@ contract PuzzleBoxFixture is Test {
         address proxy = address(_puzzle);
         address impl = address(_factory.logic());
 
-        // bool init = _puzzle.isInitialized();
-        // (bool a, bytes memory b) = impl.call(hex'392e53cd'); // 'isInitialized()' !!false!!
+        bool init = _puzzle.isInitialized();
+        (bool a, bytes memory b) = impl.call(hex'392e53cd'); // 'isInitialized()' !! false !!
 
-        // (bool c, bytes memory d) = proxy.call(hex'8da5cb5b'); //(hex'925facb1');
+        (bool c, bytes memory d) = proxy.call(hex'8da5cb5b'); // _puzzle.owner() !! address(0x0) !! 
 
-        PuzzleBoxProxy(payable(proxy)).isFunctionLocked(hex'925facb1');
-        bytes32 proxyMappingStorageVal = vm.load(proxy, keccak256(hex'925facb1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000')); //bytes.concat(abi.encode(hex'925facb1'), abi.encode(0x00'))));
+        PuzzleBoxProxy(payable(proxy)).isFunctionLocked(hex'925facb1'); // _puzzle.torch() !! true !!
+        // since the storage slot of isFunctionLocked mapping is == keccak256(bytes.concat(abi.encode(hex'925facb1'), abi.encode(0x00')))));
+        bytes32 proxyMappingStorageVal = vm.load(proxy, keccak256(hex'925facb1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000'));
 
         // initialize impl to then read impl's storage layout
         address payable[] memory friends = new address payable[](2);
@@ -72,13 +73,13 @@ contract PuzzleBoxFixture is Test {
             bytes32 proxyStorageVal = vm.load(proxy, bytes32(i));
         }
 
+        // check leakCount
+        uint256 leaks = _puzzle.leakCount();
+
         // Uncomment to verify a complete solution.
         // vm.expectEmit(false, false, false, false, address(_puzzle));
         // emit Open(address(0));
         _solution.solve(_puzzle);
-
-        // uint256 balanceAfter = proxy.balance;
-        // assertEq(balanceAfter, 0);
     }
 
     // function test_stuff() external returns (bytes32) {

