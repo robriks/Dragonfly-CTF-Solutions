@@ -456,10 +456,46 @@ fallback() external payable {
 
 Now all relevant state slots and addresses are nice and warm, leading to a successful ```zip()``` invocation as well as the ```burnDripId(1)``` modifier!
 
-## Onto the next dripId to burn: 3
+## Onto the next function that burns dripId 3, spread()
 
-Next up, we'd like to invoke the ```burnDripId(3)``` modifier attached to the ```spread()``` function.
+Next up, we'd like to invoke the ```burnDripId(3)``` modifier attached to the ```spread()``` function. Easy enough! All we need to do here is call it using the parameters provided when the Puzzlebox was created and the ```befriend()``` function was used to initialize the ```friendshipHash```. These parameters can be pulled from the ```createPuzzleBox()``` function from the ```PuzzleBoxFactory``` contract.
 
+```
+address payable[] memory friends = new address payable[](2);
+uint256[] memory friendsCutBps = new uint256[](friends.length);
+friends[0] = payable(0x416e59DaCfDb5D457304115bBFb9089531D873B7);
+friends[1] = payable(0xC817dD2a5daA8f790677e399170c92AabD044b57);
+friendsCutBps[0] = 0.015e4;
+friendsCutBps[1] = 0.0075e4;
+puzzle.spread(friends, friendsCutBps);
+```
 
+One thing to keep in mind is that this ```spread()``` function contains the only usage of ```_transferEth()``` that is not gated by access control, time, or other means. Since we know we'll have to drain the proxy contract of it's ETH balance, it's possible we'll need to revisit the function if the proxy still has a balance when we finish burning all the ```dripIds```
+
+## Burning the last remaining dripId: 10, using creep()
+
+The final function with a ```burnDripId()``` modifier is ```creep()```, which will burn dripId 10 if we manage to call it correctly. The recursivity of this function makes it a bit tricky to pull off, though. We need the following function to return 7:
+
+```
+function creepForward()
+    external payable
+    returns (uint256 count)
+{
+    unchecked {
+        count = 1;
+        if (msg.value != 0) {
+            try this.creepForward{value: msg.value - 1}() returns (uint256 count_) {
+                count += count_;
+            } catch {}
+        }
+    }
+}
+```
+
+To get ```creep()``` to succeed in stopping after calling ```creepForward()``` 7 times, we should provide a constrained gas limit along the lines of the ```leak()``` function from earlier. This time we'll need to use a lot more gas since the recursive loop calls into ```creepForward()``` externally. 
+
+I'd be lying if I said this went pretty fast for me just via trial and error, though I'm sure quicker hackers than me could identify the exact amount of gas spent by each call and identify the right multiple thereof to complete the call in a way without being ```'too creepy'``` (the error message for too many calls) or, well, not creepy enough. First, I tried some lowballs in the 12_000 range which all failed. So I bumped it up to 24_000, then 50_000, then 80_000, each time observing that the returned uin256 was steadily growing, soon approaching 7. 100_000 was the golden gas amount to use for me based on trial and error. If anyone has suggestions for a faster and more precise way to do this, please [reach out](https://twitter.com/marsterlund) and let me know as I'd love to learn how!
+
+## Closing
 
 All in all, the Dragonfly.xyz CTF was a fantastic experience to participate in and the organizer, Lawrence Forman [@merklejerk on Twitter](https://twitter.com/merklejerk), deserves applause for an excellent educational resource for whitehat hackers and security enthusiasts like me.
