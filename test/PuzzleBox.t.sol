@@ -28,6 +28,8 @@ contract PuzzleBoxFixture is Test {
     }
 
     function test_win() external initEnv {
+        // return bytes32(-0x625cb970c2768fefafc3512a3ad9764560b330dcafe02714654fe48dd069b6df);
+        // 71301600283128936764672812745529451294904726341347593422192209434084996057698 == 0x9DA3468F3D897010503CAED5C52689B959FBAC09FF6879275A8279FEFFCC8A62
 
         // // code to poke and prod around
         address proxy = address(_puzzle);
@@ -73,22 +75,11 @@ contract PuzzleBoxFixture is Test {
             bytes32 proxyStorageVal = vm.load(proxy, bytes32(i));
         }
 
-        // check leakCount
-        uint256 leaks = _puzzle.leakCount();
-
         // Uncomment to verify a complete solution.
         // vm.expectEmit(false, false, false, false, address(_puzzle));
         // emit Open(address(0));
         _solution.solve(_puzzle);
     }
-
-    // function test_stuff() external returns (bytes32) {
-    //     bytes32 targetSlot = keccak256(hex'925facb1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000');
-    //     // provide uint256 key that when concatenated with 0x07 and then is hashed equals targetSlot
-    //     uint256 dripId = 42;
-    //     // return keccak256(bytes.concat(hex'000000000000000000000000000000000000000000000000000000000000002a', hex'0000000000000000000000000000000000000000000000000000000000000007'));
-    //     return targetSlot;
-    // }
 }
 
 contract SolutionContainer {

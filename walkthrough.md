@@ -496,6 +496,106 @@ To get ```creep()``` to succeed in stopping after calling ```creepForward()``` 7
 
 I'd be lying if I said this went pretty fast for me just via trial and error, though I'm sure quicker hackers than me could identify the exact amount of gas spent by each call and identify the right multiple thereof to complete the call in a way without being ```'too creepy'``` (the error message for too many calls) or, well, not creepy enough. First, I tried some lowballs in the 12_000 range which all failed. So I bumped it up to 24_000, then 50_000, then 80_000, each time observing that the returned uin256 was steadily growing, soon approaching 7. 100_000 was the golden gas amount to use for me based on trial and error. If anyone has suggestions for a faster and more precise way to do this, please [reach out](https://twitter.com/marsterlund) and let me know as I'd love to learn how!
 
-## Closing
+## Revisiting the spread() function to drain the proxy's remaining balance
 
-All in all, the Dragonfly.xyz CTF was a fantastic experience to participate in and the organizer, Lawrence Forman [@merklejerk on Twitter](https://twitter.com/merklejerk), deserves applause for an excellent educational resource for whitehat hackers and security enthusiasts like me.
+The CTF finish line (```open()```) is nearly within our grasp! As mentioned previously, I suspected we'd be left with some balance on the proxy contract and suggested the ```spread()``` function would be the most promising candidate for draining the last dregs of wei. So let's revisit our call to ```spread()``` from when we used it to ```burnDripId(3)``` and make some changes to empty the proxy and prime it for our final exploit. Here's the existing code we wrote within ```solve()```:
+
+```
+address payable[] memory friends = new address payable[](2);
+uint256[] memory friendsCutBps = new uint256[](friends.length);
+friends[0] = payable(0x416e59DaCfDb5D457304115bBFb9089531D873B7);
+friends[1] = payable(0xC817dD2a5daA8f790677e399170c92AabD044b57);
+friendsCutBps[0] = 0.015e4;
+friendsCutBps[1] = 0.0075e4;
+puzzle.spread(friends, friendsCutBps);
+```
+
+And here is the check within ```spread()``` that we need to get past in order to trigger the ```_transferEth()``` function:
+
+```
+require(friendshipHash == _getFriendshipHash(friends, friendsCutBps), 'not my friends');
+```
+
+Where ```friendshipHash``` is a storage variable of bytes32 type that represents the keccak256 hash of the two concatenated arrays. Knowing the above check is the one we need to satisfy, the next logical step is to examine the internal ```_getFriendshipHash()``` function whose implementation is a single line of code:
+
+```
+return keccak256(abi.encodePacked('fees', friends, friendsBps));
+```
+
+This is the same function that was used to derive and initialize the ```friendshipHash``` bytes32 in storage. If you're like me and you've dug deep into the Solidity lang documentation for one reason or another, you may recall the section that outlines the differences between ```abi.encode()``` versus ```abi.encodePacked()```. Specifically that there's a security warning raising alarm bells for any developer who might fall into the trap of hashing concatenated dynamic types that are combined using ```abi.encodePacked()```.
+
+The warning emphasizes that ```abi.encodePacked()``` does not behave like vanilla abi encoding in that it doesn't provide padding between data inputs, meaning that hash collisions can be manufactured when dynamic types are concatenated by moving the point of separation between the concatenated output. In simple terms, imagine the following output:
+
+```keccak256('abcd')```
+
+If ```abi.encodePacked()``` was used to produce the string being hashed, ```'abcd'```, then by the time the hash is obtained there is no way for the EVM to know whether the hash came from which of the four following options:
+
+```abi.encodePacked('a', 'bcd')```
+
+```abi.encodePacked('ab', 'cd')```
+
+```abi.encodePacked('abc', 'd')```
+
+```abi.encodePacked('abcd', '')```
+
+Implementations that allow for neighboring dynamic types to be altered by a malicious user or contract are vulnerable to these ambiguous inputs.
+
+##### Wow, I wrote that blurb from my memory of the warning and decided to go grab it and include it here to make sure it's adequately explained. My memory of the example is pretty verbatim! Here's the warning:
+
+![soliditylang.png](public/soliditylang.png)
+
+So in order to hack ```spread()``` we shift the two arrays around like the ```abi.encodePacked('ab', 'cd')``` <-> ```abi.encodePacked('a', 'bcd')``` example from earlier. In this case, we convert the second address in the ```friends``` array into a uint256 and turn it into the first member of a new 3 element ```friendsBps``` array. The resulting code block now looks like this:
+
+```
+address payable[] memory friends = new address payable[](1);
+uint256[] memory friendsCutBps = new uint256[](3);
+friends[0] = payable(0x416e59DaCfDb5D457304115bBFb9089531D873B7);
+friendsCutBps[0] = uint256(uint160(0xC817dD2a5daA8f790677e399170c92AabD044b57));
+friendsCutBps[1] = 150;
+friendsCutBps[2] = 75;
+puzzle.spread(friends, friendsCutBps);
+```
+
+##### Note that since we went back and changed ```spread()``` to empty the proxy contract's balance, our solution for ```creep()``` (which depends on contract balance) is broken as a result! I simply moved the invocation of ```creep``` to happen before the call to ```spread()``` to fix that.
+
+## Everything works! The last step is to open the puzzlebox!
+
+If you participated in [Coinbase's Crypto Bounty Challenge mini-CTF](https://www.coinbase.com/bounty/ethdenver23) for ETHDenver this year, you'll be familiar with ECDSA signatures. Specifically some malleability vulnerabilities and 0 return values from ecrecover().
+
+##### [My solutions and walkthrough to the Coinbase Crypto Bounty CTF are here](https://mirror.xyz/0x65b54A4646369D8ad83CB58A5a6b39F22fcd8cEe/uyisyXLf0vrBv9jhnGMe9fnacE5mAaXkDwg6mP2a9sk)
+
+This ```open()``` function looks just like one of those since it accepts a nonce and a bytes calldata which are checked by ecrecover() in PuzzleBox's declared ```_recoverPackedSignature()``` internal function. In ```_consumeSignature()``` there is a check against a storage mapping of consumed signatures, each storing the block number from when the signature was used, so we can't just replay the original signature.
+
+The assembly block in ```_recoverPackedSignature()``` is sound, so we can't move the domain hash, r, s, or v ECDSA signature parameters around either. The ecrecover()'s return value is checked against the ```address admin``` in storage so we also can't force a 0 return value using an invalid recovery id (v) parameter to then compare it to a zeroed out admin address.
+
+Nope, this one is an ECDSA signature malleability hack with heavier cryptographic focus. This hack is one that arises out of the symmetrical nature of the SECP256K1 elliptical curve: a property that results in two valid mathematical signatures. Essentially, the SECP256K1 curve looks like this:
+
+![Secp256k1.png](public/Secp256k1.png)
+
+Since it is symmetric along the X axis, there are two points on the curve that resolve the ecrecover function to the same originating signer. These possess the same ECDSA r values, as well as the same z hash which in this case is renamed to ```nonce```. What's different is that the ECDSA s value is negative relative to the ECDSA n value- imagine it being flipped across the x axis. 
+
+This works like two's complement with regards to overflow and underflow vulnerabilities; in computation, negative numbers actually are equidistant from '0' even though they are measured by the distance from the maximum value of a type. So, to 'flip' the s value to negative, we must "two's complement" it against SECP251K's N constant, which for sufficient/maximum security in a 256 bit type maximum environment is an extraordinarily large prime number. In short, we should subtract the original ```adminSig``` s value from the constant SECP251K.N like so:
+
+```
+uint256 SECP256N = uint256(0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141); // grab secpk251.n cryptographic constant from google lol
+uint256 negativeS = SECP256KN- uint256(0x625cb970c2768fefafc3512a3ad9764560b330dcafe02714654fe48dd069b6df); // secpk251n - original signature's s value
+```
+
+Another quirk about exploiting signature malleability on SECP256K, is that the recovery id ```v``` (if it is being used) must be changed to 27 instead of 28 so that it correctly points to other quadrant of the curve. Knowing this, we have all the information we need to pull off the final exploit that will open the Puzzlebox.
+
+```
+uint256 SECPK251n = uint256(0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141);
+puzzle.open(
+    uint256(0xc8f549a7e4cb7e1c60d908cc05ceff53ad731e6ea0736edf7ffeea588dfb42d8), // same nonce as original
+    // using abi.encodePacked because a block with multiple lines of `hex` notation is cursed imo
+    abi.encodePacked(
+        uint256(0xc8f549a7e4cb7e1c60d908cc05ceff53ad731e6ea0736edf7ffeea588dfb42d8),
+        SECPK251n - uint256(0x625cb970c2768fefafc3512a3ad9764560b330dcafe02714654fe48dd069b6df), // secpk251n - original signature's s value
+        uint8(0x1b) // since signature malleability is being exploited, 27 should be provided as recovery id instead of 28 to point to other quadrant
+    )
+);
+```
+
+## Whew. That was an extremely engaging CTF!
+
+All in all, the Dragonfly.xyz CTF was a fantastic experience to participate in and the organizer, Lawrence Forman [@merklejerk on Twitter](https://twitter.com/merklejerk), deserves applause for an excellent educational resource for whitehat hackers and security researchers.
