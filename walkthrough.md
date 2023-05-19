@@ -1,6 +1,6 @@
 # Dragonfly CTF Walkthrough: Puzzlebox.sol
 
-Hello anon, welcome to KweenBirb's walkthrough of Dragonfly's recent CTF, held May 6-8 2023, featuring hackable quirks of Solidity and the EVM at large.
+Hello anon, welcome to 👦🏻👦🏻.eth's walkthrough of [Dragonfly's recent CTF](https://ctf.dragonfly.xyz), held May 6-8 2023, featuring hackable quirks of Solidity and the EVM at large.
 
 This walkthrough details the process of deciphering and auditing Puzzlebox.sol, a Solidity puzzlebox containing metaversal secrets so powerful they can be leveraged to save the internet from exploitation by bad actors.
 
