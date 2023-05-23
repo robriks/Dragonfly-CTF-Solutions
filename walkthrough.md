@@ -522,13 +522,15 @@ Where ```friendshipHash``` is a storage variable of bytes32 type that represents
 return keccak256(abi.encodePacked('fees', friends, friendsBps));
 ```
 
-This is the same function that was used to derive and initialize the ```friendshipHash``` bytes32 in storage. If you're like me and you've dug deep into the Solidity lang documentation for one reason or another, you may recall the section that outlines the differences between ```abi.encode()``` versus ```abi.encodePacked()```. Specifically that there's a security warning raising alarm bells for any developer who might fall into the trap of hashing concatenated dynamic types that are combined using ```abi.encodePacked()```.
+This is the same function that was used to derive and initialize the ```friendshipHash``` bytes32 in storage. If you've dug deep into the Solidity lang documentation for one reason or another regarding the abi encoding used for inter-contract calls or bytecode encoding, you may recall the section that outlines the differences between ```abi.encode()``` versus ```abi.encodePacked()```. Specifically that there's a security warning raising alarm bells for any developer who might fall into the trap of hashing concatenated dynamic types that are combined using ```abi.encodePacked()```.
 
-The warning emphasizes that ```abi.encodePacked()``` does not behave like vanilla abi encoding in that it doesn't provide padding between data inputs, meaning that hash collisions can be manufactured when dynamic types are concatenated by moving the point of separation between the concatenated output. In simple terms, imagine the following output:
+The warning emphasizes that ```abi.encodePacked()``` does not behave like vanilla abi encoding in that it doesn't provide padding between data inputs, fully packing each 32 byte word to fit in a whole storage slot. One result of this behavior is that when using packed encoding, hash collisions can be manufactured if dynamic type arrays are positioned consecutively and can be manipulated by the inputs. 
+
+The neighboring two dynamic arrays in calldata allow for an attacker to move the point of separation between them by changing the lengths of the arrays but keeping the same ordering of values. In visual terms, imagine the following output:
 
 ```keccak256('abcd')```
 
-If ```abi.encodePacked()``` was used to produce the string being hashed, ```'abcd'```, then by the time the hash is obtained there is no way for the EVM to know whether the hash came from which of the four following options:
+If ```abi.encodePacked()``` was used to produce the string being hashed, ```'abcd'```, then by the time the hash is encodePacked there is no way for the EVM to know whether the hash came from which of the four following options:
 
 ```abi.encodePacked('a', 'bcd')```
 
@@ -540,7 +542,7 @@ If ```abi.encodePacked()``` was used to produce the string being hashed, ```'abc
 
 Implementations that allow for neighboring dynamic types to be altered by a malicious user or contract are vulnerable to these ambiguous inputs.
 
-##### Wow, I wrote that blurb from my memory of the warning and decided to go grab it and include it here to make sure it's adequately explained. My memory of the example is pretty verbatim! Here's the warning:
+##### From the Solidity Lang docs, here's the warning:
 
 ![soliditylang.png](public/soliditylang.png)
 
